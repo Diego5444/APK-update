@@ -1,0 +1,6 @@
+{
+  "name": "Video Player",
+  "description": "A comprehensive video player supporting online streaming links with custom language and subtitle selection.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

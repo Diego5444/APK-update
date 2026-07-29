@@ -1,36 +1,83 @@
-# This is a basic workflow to help you get started with Actions
+# Android CI: build debug APK and upload artifact
+name: Android CI
 
-name: CI
-
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
   build:
-    # The type of runner that the job will run on
     runs-on: ubuntu-latest
+    env:
+      # Gradle/SDK locations (ANDROID_SDK_ROOT will be set during the SDK install step)
+      GRADLE_USER_HOME: ${{ runner.temp }}/.gradle
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+      - name: Install Android SDK command-line tools and essential packages
+        # Use runner.temp so the SDK is cleaned between runs
+        env:
+          ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
         run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y unzip wget
+          mkdir -p "$ANDROID_SDK_ROOT"
+          cd "$HOME"
+
+          # Download Android command line tools (versioned URL may need updating in the future)
+          # If this link breaks in the future, replace with the latest commandlinetools zip from Google.
+          CLI_ZIP="commandlinetools-linux-9477386_latest.zip"
+          wget -q "https://dl.google.com/android/repository/${CLI_ZIP}" -O cmdline-tools.zip
+          unzip -q cmdline-tools.zip
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          mv cmdline-tools/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
+
+          # Make sdkmanager available in this step
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+
+          # Accept licenses and install platform-tools, platforms and build-tools commonly needed to build
+          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses
+
+          # Install minimal required components (adjust API level / build-tools version if needed)
+          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+
+          # Persist env for subsequent steps
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
+
+      - name: Setup Gradle 8.5
+        uses: gradle/gradle-build-action@v2
+        with:
+          gradle-version: '8.5'
+          wrapper-enabled: true
+
+      - name: Grant execute to gradlew
+        run: chmod +x ./gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon
+        # Java is already provided by setup-java; ANDROID_SDK_ROOT is set in the environment by the SDK step.
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
